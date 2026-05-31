@@ -29,3 +29,16 @@ pip install -r requirements.txt
 
 # Dar permisos de ejecución (Linux/Mac)
 chmod +x mx-webscan.py
+
+🚀 Uso
+Escaneo básico
+python mx-webscan.py -u "http://testphp.vulnweb.com/artists.php?artist=1"
+
+Con proxy (Burp Suite para análisis manual)
+python mx-webscan.py -u "http://target.com/page.php?id=1" --proxy http://127.0.0.1:8080
+
+Headers personalizados (autenticación)
+python mx-webscan.py -u "http://target.com/api?user=1" --header "Authorization: Bearer token123"
+
+Timeout personalizado
+python mx-webscan.py -u "http://target.com/search?q=test" --timeout 10
